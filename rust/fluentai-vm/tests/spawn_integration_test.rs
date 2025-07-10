@@ -64,7 +64,6 @@ fn test_spawn_with_lambda() {
 }
 
 #[test]
-#[ignore = "Compiler issue: let bindings not generating proper code for channel creation and variable capture"]
 fn test_spawn_with_channel() {
     // Initialize effect context and runtime
     let context = Arc::new(EffectContext::new());

@@ -690,7 +690,7 @@ impl Compiler {
         let scope_idx = self.locals.len() - 1;
 
         // Compile bindings
-        for (_i, (name, value)) in bindings.iter().enumerate() {
+        for (i, (name, value)) in bindings.iter().enumerate() {
             let before_depth = self.stack_depth;
             self.compile_node(graph, *value)?;
 
@@ -701,11 +701,13 @@ impl Compiler {
                 // like handlers that manipulate the stack in complex ways
             }
 
-            // Store the absolute position where this variable is stored
-            // We'll convert to frame-relative when loading
-            let abs_pos = self.stack_depth.saturating_sub(1);
+            // Store the relative position where this variable is stored
+            // The position is relative to the scope base
+            // Fixed for GitHub issue #26: Let bindings and variable capture in closures
+            // Previously stored absolute position which caused lookup failures in compile_variable()
+            let rel_pos = i;
 
-            self.locals[scope_idx].insert(name.clone(), abs_pos);
+            self.locals[scope_idx].insert(name.clone(), rel_pos);
         }
 
         // Compile body (preserving tail position - let body is in tail position)
@@ -1692,14 +1694,22 @@ impl Compiler {
                 self.collect_free_variables(graph, *body, free_vars, &mut new_bound)?;
             }
             Node::Let { bindings, body } => {
-                // Let bindings are evaluated in sequence
-                let mut new_bound = bound_vars.clone();
-                for (name, value) in bindings {
-                    // Value can reference previous bindings
-                    self.collect_free_variables(graph, *value, free_vars, &mut new_bound)?;
-                    new_bound.insert(name.clone());
+                // For Let expressions, the binding values can only see outer scope variables,
+                // not variables from the same Let expression. The body can see all bindings.
+                
+                // Add all binding names to bound_vars for the body
+                let mut body_bound = bound_vars.clone();
+                for (name, _) in bindings {
+                    body_bound.insert(name.clone());
                 }
-                self.collect_free_variables(graph, *body, free_vars, &mut new_bound)?;
+                
+                // Process each binding value with only the outer scope
+                for (_, value) in bindings {
+                    self.collect_free_variables(graph, *value, free_vars, bound_vars)?;
+                }
+                
+                // Process the body with all bindings available
+                self.collect_free_variables(graph, *body, free_vars, &mut body_bound)?;
             }
             Node::Application { function, args } => {
                 self.collect_free_variables(graph, *function, free_vars, bound_vars)?;
